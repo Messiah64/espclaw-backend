@@ -13,17 +13,17 @@ export function deviceTools(pushToDevice: DevicePush): RegisteredTool[] {
       parameters: {
         type: "object",
         properties: {
-          device_id: { type: "string" },
+          device_id: { type: "string", description: "Optional. Defaults to the currently connected device." },
           text: { type: "string" }
         },
-        required: ["device_id", "text"],
+        required: ["text"],
         additionalProperties: false
       },
-      handler: async (args) => {
-        const ok = pushToDevice(stringArg(args, "device_id"), { type: "response_text", text: stringArg(args, "text") });
+      handler: async (args, context) => {
+        const targetDeviceId = stringArg(args, "device_id", context.deviceId ?? "");
+        const ok = pushToDevice(targetDeviceId, { type: "response_text", text: stringArg(args, "text") });
         return { ok, text: ok ? "Text sent to device." : "Device is not connected." };
       }
     }
   ];
 }
-
