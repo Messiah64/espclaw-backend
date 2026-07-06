@@ -125,7 +125,7 @@ export class RealtimeVoiceSession {
               : null
           },
           output: {
-            format: { type: "audio/pcm" },
+            format: { type: "audio/pcm", rate: 24000 },
             voice: this.config.openaiRealtimeVoice
           }
         },
