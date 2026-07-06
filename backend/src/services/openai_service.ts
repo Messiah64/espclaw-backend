@@ -19,6 +19,40 @@ export class OpenAIService {
     this.client = config.openaiApiKey ? new OpenAI({ apiKey: config.openaiApiKey }) : undefined;
   }
 
+  private async withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label}_timeout`)), ms);
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private extractText(response: any): string {
+    if (typeof response?.output_text === "string" && response.output_text.trim()) {
+      return response.output_text.trim();
+    }
+
+    const chunks: string[] = [];
+    for (const item of response?.output ?? []) {
+      if (item?.type === "message" && Array.isArray(item.content)) {
+        for (const part of item.content) {
+          if (typeof part?.text === "string" && part.text.trim()) {
+            chunks.push(part.text.trim());
+          }
+        }
+      } else if (typeof item?.text === "string" && item.text.trim()) {
+        chunks.push(item.text.trim());
+      }
+    }
+    return chunks.join("\n").trim();
+  }
+
   async respond(input: {
     userId: string;
     deviceId?: string;
@@ -30,7 +64,13 @@ export class OpenAIService {
     }
 
     const model = input.mode === "deep" ? this.config.openaiDeepModel : this.config.openaiFastModel;
-    const memories = await this.memory.recall(input.userId);
+    let memories: Array<{ key: string; value: string }> = [];
+    try {
+      memories = await this.withTimeout(this.memory.recall(input.userId), 2500, "memory_recall");
+    } catch (error) {
+      this.logger.warn({ error }, "memory recall skipped");
+    }
+
     const instructions = [
       "You are ESPClaw, a private desktop assistant connected to an ESP32-S3-BOX-3B.",
       "Keep voice replies short, natural, and useful.",
@@ -45,49 +85,53 @@ export class OpenAIService {
       deviceId: input.deviceId
     };
 
-    let response = await this.client.responses.create({
-      model,
-      instructions,
-      input: input.text,
-      tools: this.tools.openAiTools() as never,
-      tool_choice: "auto"
-    } as never) as any;
-
-    for (let round = 0; round < 4; round++) {
-      const calls = (response.output ?? []).filter((item: any) => item.type === "function_call");
-      if (!calls.length) break;
-
-      const toolOutputs = [];
-      for (const call of calls) {
-        const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
-        await this.audit.record({
-          userId: input.userId,
-          deviceId: input.deviceId,
-          action: `tool.${call.name}`,
-          risk: "read_only",
-          status: "allowed",
-          metadata: { callId: call.call_id }
-        });
-        const result = await this.tools.run(call.name, args, context);
-        toolOutputs.push({
-          type: "function_call_output",
-          call_id: call.call_id,
-          output: JSON.stringify(result)
-        });
-      }
-
-      response = await this.client.responses.create({
+    try {
+      let response = await this.withTimeout(this.client.responses.create({
         model,
         instructions,
-        previous_response_id: response.id,
-        input: toolOutputs,
-        tools: this.tools.openAiTools() as never
-      } as never) as any;
-    }
+        input: input.text,
+        tools: this.tools.openAiTools() as never,
+        tool_choice: "auto"
+      } as never) as Promise<any>, input.mode === "deep" ? 60000 : 25000, "openai_response");
 
-    const text = response.output_text || "Done.";
-    this.logger.info({ model, chars: text.length }, "openai response completed");
-    return text;
+      for (let round = 0; round < 4; round++) {
+        const calls = (response.output ?? []).filter((item: any) => item.type === "function_call");
+        if (!calls.length) break;
+
+        const toolOutputs = [];
+        for (const call of calls) {
+          const args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+          await this.audit.record({
+            userId: input.userId,
+            deviceId: input.deviceId,
+            action: `tool.${call.name}`,
+            risk: "read_only",
+            status: "allowed",
+            metadata: { callId: call.call_id }
+          });
+          const result = await this.withTimeout(this.tools.run(call.name, args, context), 20000, `tool_${call.name}`);
+          toolOutputs.push({
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify(result)
+          });
+        }
+
+        response = await this.withTimeout(this.client.responses.create({
+          model,
+          instructions,
+          previous_response_id: response.id,
+          input: toolOutputs,
+          tools: this.tools.openAiTools() as never
+        } as never) as Promise<any>, input.mode === "deep" ? 60000 : 25000, "openai_tool_followup");
+      }
+
+      const text = this.extractText(response) || "Done.";
+      this.logger.info({ model, chars: text.length }, "openai response completed");
+      return text;
+    } catch (error) {
+      this.logger.error({ error, model }, "openai response failed");
+      return "Backend LLM call failed. Check the Render logs, then try again.";
+    }
   }
 }
-

@@ -91,33 +91,45 @@ export async function registerDeviceWebSocket(
           deepgramSession?.finish();
           deepgramSession = undefined;
           if (latestFinalTranscript.trim()) {
-            send(socket, { type: "assistant_thinking", active: true });
-            const reply = await services.openai.respond({
-              userId: "owner",
-              deviceId,
-              text: latestFinalTranscript,
-              mode: "voice"
-            });
-            send(socket, { type: "assistant_thinking", active: false });
-            send(socket, { type: "response_text", text: reply });
-            const tts = await services.tts.synthesizeShortReply(reply);
-            for (const chunk of tts.chunks) {
-              send(socket, { type: "tts_audio_chunk", audio_b64: chunk.toString("base64"), mime_type: tts.mimeType });
+            try {
+              send(socket, { type: "assistant_thinking", active: true });
+              const reply = await services.openai.respond({
+                userId: "owner",
+                deviceId,
+                text: latestFinalTranscript,
+                mode: "voice"
+              });
+              send(socket, { type: "response_text", text: reply });
+              const tts = await services.tts.synthesizeShortReply(reply);
+              for (const chunk of tts.chunks) {
+                send(socket, { type: "tts_audio_chunk", audio_b64: chunk.toString("base64"), mime_type: tts.mimeType });
+              }
+              send(socket, { type: "tts_audio_end" });
+            } catch (error) {
+              request.log.error({ error, deviceId }, "audio assistant response failed");
+              send(socket, { type: "error", code: "assistant_failed", message: "Assistant response failed." });
+            } finally {
+              send(socket, { type: "assistant_thinking", active: false });
             }
-            send(socket, { type: "tts_audio_end" });
           }
           break;
         case "text_input":
           if (event.text.trim()) {
-            send(socket, { type: "assistant_thinking", active: true });
-            const reply = await services.openai.respond({
-              userId: "owner",
-              deviceId,
-              text: event.text,
-              mode: event.mode ?? "voice"
-            });
-            send(socket, { type: "assistant_thinking", active: false });
-            send(socket, { type: "response_text", text: reply });
+            try {
+              send(socket, { type: "assistant_thinking", active: true });
+              const reply = await services.openai.respond({
+                userId: "owner",
+                deviceId,
+                text: event.text,
+                mode: event.mode ?? "voice"
+              });
+              send(socket, { type: "response_text", text: reply });
+            } catch (error) {
+              request.log.error({ error, deviceId }, "text assistant response failed");
+              send(socket, { type: "error", code: "assistant_failed", message: "Assistant response failed." });
+            } finally {
+              send(socket, { type: "assistant_thinking", active: false });
+            }
           }
           break;
         default:
