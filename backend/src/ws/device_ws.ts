@@ -236,7 +236,14 @@ export async function registerDeviceWebSocket(
           return;
         }
         await handleEvent(event);
-      })();
+      })().catch((error) => {
+        request.log.error({ error, deviceId }, "device websocket message failed");
+        send(socket, {
+          type: "error",
+          code: "device_ws_message_failed",
+          message: "Device websocket message failed; reconnecting may recover."
+        });
+      });
     });
 
     socket.on("close", () => {
