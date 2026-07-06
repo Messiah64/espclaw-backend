@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { AppConfig } from "./config.js";
+import { ensureDatabaseSchema } from "./db/client.js";
 import { registerDeviceRoutes } from "./routes/device.js";
 import { registerGoogleOAuthRoutes } from "./routes/google_oauth.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -17,6 +18,7 @@ export async function buildServer(config: AppConfig): Promise<FastifyInstance> {
   });
 
   const services = createServices(config, server.log);
+  await ensureDatabaseSchema(services.pool, server.log);
   server.decorate("services", services);
 
   await server.register(cors, { origin: true });
@@ -41,4 +43,3 @@ declare module "fastify" {
     services: ReturnType<typeof createServices>;
   }
 }
-
