@@ -40,6 +40,8 @@ function hashSafetyId(value: string): string {
 }
 
 const DEVICE_AUDIO_B64_CHARS = 2400;
+const AUDIO_MODALITIES = ["audio"];
+const TEXT_MODALITIES = ["text"];
 
 export class RealtimeVoiceSession {
   private readonly ws: WebSocket;
@@ -102,7 +104,7 @@ export class RealtimeVoiceSession {
       session: {
         type: "realtime",
         model: this.config.openaiRealtimeModel,
-        output_modalities: this.config.openaiRealtimeOutputAudio ? ["audio", "text"] : ["text"],
+        output_modalities: this.outputModalities(),
         instructions: this.instructions(),
         reasoning: this.config.openaiRealtimeReasoningEffort
           ? { effort: this.config.openaiRealtimeReasoningEffort }
@@ -177,7 +179,7 @@ export class RealtimeVoiceSession {
     this.send({
       type: "response.create",
       response: {
-        output_modalities: this.config.openaiRealtimeOutputAudio ? ["audio", "text"] : ["text"]
+        output_modalities: this.outputModalities()
       }
     });
   }
@@ -191,7 +193,7 @@ export class RealtimeVoiceSession {
       this.send({
         type: "response.create",
         response: {
-          output_modalities: this.config.openaiRealtimeOutputAudio ? ["audio", "text"] : ["text"]
+          output_modalities: this.outputModalities()
         }
       });
       return;
@@ -230,6 +232,10 @@ export class RealtimeVoiceSession {
     if (this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(event));
     }
+  }
+
+  private outputModalities(): string[] {
+    return this.config.openaiRealtimeOutputAudio ? AUDIO_MODALITIES : TEXT_MODALITIES;
   }
 
   private async handleMessage(raw: string): Promise<void> {
@@ -406,7 +412,7 @@ export class RealtimeVoiceSession {
     this.send({
       type: "response.create",
       response: {
-        output_modalities: this.config.openaiRealtimeOutputAudio ? ["audio", "text"] : ["text"]
+        output_modalities: this.outputModalities()
       }
     });
   }
