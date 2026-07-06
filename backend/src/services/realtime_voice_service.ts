@@ -39,6 +39,8 @@ function hashSafetyId(value: string): string {
   return `espclaw-${hash.toString(16).padStart(8, "0")}`;
 }
 
+const DEVICE_AUDIO_B64_CHARS = 2400;
+
 export class RealtimeVoiceSession {
   private readonly ws: WebSocket;
   private readonly context: ToolExecutionContext;
@@ -220,7 +222,7 @@ export class RealtimeVoiceSession {
       "Read-only actions, searches, summaries, and drafts should proceed without extra confirmation.",
       "Sending emails, deleting data, changing access, purchases, or destructive account actions must go through the permission flow and may return pending approval.",
       "When audio is unclear, ask a brief clarifying question instead of inventing missing facts.",
-      "The speaker is disabled by default; make the text response useful even without audio playback."
+      "The device speaker is enabled by default at low volume; still keep replies concise for the small display."
     ].join("\n");
   }
 
@@ -282,7 +284,7 @@ export class RealtimeVoiceSession {
       case "response.output_audio.delta":
       case "response.audio.delta":
         if (this.config.openaiRealtimeOutputAudio && typeof event.delta === "string") {
-          this.options.send({ type: "tts_audio_chunk", audio_b64: event.delta, mime_type: "audio/pcm;rate=24000" });
+          this.sendAudioToDevice(event.delta);
         }
         break;
       case "response.output_text.done":
@@ -338,6 +340,19 @@ export class RealtimeVoiceSession {
       }
     }
     return chunks.join("\n").trim();
+  }
+
+  private sendAudioToDevice(audioB64: string): void {
+    for (let offset = 0; offset < audioB64.length; offset += DEVICE_AUDIO_B64_CHARS) {
+      let end = Math.min(offset + DEVICE_AUDIO_B64_CHARS, audioB64.length);
+      end -= (end - offset) % 4;
+      if (end <= offset) end = audioB64.length;
+      this.options.send({
+        type: "tts_audio_chunk",
+        audio_b64: audioB64.slice(offset, end),
+        mime_type: "audio/pcm;rate=24000"
+      });
+    }
   }
 
   private async runToolCalls(calls: any[]): Promise<void> {

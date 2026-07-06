@@ -72,7 +72,7 @@ export function loadConfig(): AppConfig {
     openaiRealtimeReasoningEffort: optionalEnv("OPENAI_REALTIME_REASONING_EFFORT") ?? "low",
     openaiRealtimeTranscriptModel: optionalEnv("OPENAI_REALTIME_TRANSCRIPT_MODEL") ?? "gpt-realtime-whisper",
     openaiRealtimeVoice: optionalEnv("OPENAI_REALTIME_VOICE") ?? "marin",
-    openaiRealtimeOutputAudio: booleanEnv("OPENAI_REALTIME_OUTPUT_AUDIO", false),
+    openaiRealtimeOutputAudio: booleanEnv("OPENAI_REALTIME_OUTPUT_AUDIO", true),
     openaiVoiceReasoningEffort: optionalEnv("OPENAI_VOICE_REASONING_EFFORT") ?? "low",
     openaiDeepReasoningEffort: optionalEnv("OPENAI_DEEP_REASONING_EFFORT") ?? "high",
     deepgramApiKey: optionalEnv("DEEPGRAM_API_KEY"),
