@@ -53,6 +53,50 @@ export class OpenAIService {
     return chunks.join("\n").trim();
   }
 
+  private openAiTools(includeBuiltIns: boolean): Array<Record<string, unknown>> {
+    const tools = this.tools.openAiTools();
+    if (includeBuiltIns && this.config.openaiEnableWebSearch) {
+      tools.push({ type: "web_search_preview" });
+    }
+    return tools;
+  }
+
+  private reasoningFor(mode?: "voice" | "deep"): Record<string, unknown> | undefined {
+    const effort = mode === "deep" ? this.config.openaiDeepReasoningEffort : this.config.openaiVoiceReasoningEffort;
+    return effort ? { effort } : undefined;
+  }
+
+  private canRetryWithoutPowerOptions(error: unknown): boolean {
+    const message = String((error as { message?: unknown })?.message ?? error);
+    return /web_search|reasoning|unsupported|unknown parameter|invalid.*tool|invalid.*reasoning/i.test(message);
+  }
+
+  private async createResponse(
+    base: Record<string, unknown>,
+    mode: "voice" | "deep" | undefined,
+    timeoutMs: number,
+    label: string
+  ): Promise<any> {
+    const primary: Record<string, unknown> = {
+      ...base,
+      tools: this.openAiTools(true)
+    };
+    const reasoning = this.reasoningFor(mode);
+    if (reasoning) primary.reasoning = reasoning;
+
+    try {
+      return await this.withTimeout(this.client!.responses.create(primary as never) as Promise<any>, timeoutMs, label);
+    } catch (error) {
+      if (!this.canRetryWithoutPowerOptions(error)) throw error;
+      this.logger.warn({ error }, "openai power options rejected; retrying without built-in web/reasoning");
+      const fallback: Record<string, unknown> = {
+        ...base,
+        tools: this.openAiTools(false)
+      };
+      return this.withTimeout(this.client!.responses.create(fallback as never) as Promise<any>, timeoutMs, `${label}_fallback`);
+    }
+  }
+
   async respond(input: {
     userId: string;
     deviceId?: string;
@@ -73,10 +117,13 @@ export class OpenAIService {
 
     const instructions = [
       "You are ESPClaw, a private desktop assistant connected to an ESP32-S3-BOX-3B.",
-      "Keep voice replies short, natural, and useful.",
+      "The device is an ESP32-S3-BOX-3B with touch display, buttons, microphones, speaker hardware, IMU, and environmental sensors. Do not assume a rotary knob, IR receiver, or ESP32-C3-LCDkit hardware.",
+      "You are a fast desktop operations assistant. Act directly when the user's intent is clear.",
+      "Keep voice replies short, natural, and useful. Prefer one or two sentences unless the user asks for detail.",
       "Never reveal backend secrets, API keys, tokens, refresh tokens, or internal credentials.",
-      "Use tools for Gmail, Calendar, Drive, Contacts, Telegram, and device actions when helpful.",
-      "Sensitive writes must go through the permission tool flow and may return pending approval.",
+      "Use Gmail, Calendar, Drive, Contacts, Telegram, device display, and web search tools aggressively when they help.",
+      "Read-only actions, searches, summaries, and drafts should proceed without extra confirmation.",
+      "Sending emails, deleting data, changing access, purchases, or destructive account actions must go through the permission flow and may return pending approval.",
       memories.length ? `Relevant memory: ${memories.map((m) => `${m.key}=${m.value}`).join("; ")}` : ""
     ].filter(Boolean).join("\n");
 
@@ -86,13 +133,12 @@ export class OpenAIService {
     };
 
     try {
-      let response = await this.withTimeout(this.client.responses.create({
+      let response = await this.createResponse({
         model,
         instructions,
         input: input.text,
-        tools: this.tools.openAiTools() as never,
         tool_choice: "auto"
-      } as never) as Promise<any>, input.mode === "deep" ? 60000 : 25000, "openai_response");
+      }, input.mode, input.mode === "deep" ? 60000 : 25000, "openai_response");
 
       for (let round = 0; round < 4; round++) {
         const calls = (response.output ?? []).filter((item: any) => item.type === "function_call");
@@ -117,13 +163,12 @@ export class OpenAIService {
           });
         }
 
-        response = await this.withTimeout(this.client.responses.create({
+        response = await this.createResponse({
           model,
           instructions,
           previous_response_id: response.id,
-          input: toolOutputs,
-          tools: this.tools.openAiTools() as never
-        } as never) as Promise<any>, input.mode === "deep" ? 60000 : 25000, "openai_tool_followup");
+          input: toolOutputs
+        }, input.mode, input.mode === "deep" ? 60000 : 25000, "openai_tool_followup");
       }
 
       const text = this.extractText(response) || "Done.";

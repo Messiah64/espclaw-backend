@@ -51,16 +51,18 @@ export class DeepgramRealtimeSession {
 
   private async handleMessage(raw: string) {
     const message = JSON.parse(raw) as {
+      type?: string;
       channel?: { alternatives?: Array<{ transcript?: string }> };
       is_final?: boolean;
       speech_final?: boolean;
     };
+    if (message.type === "UtteranceEnd") return;
     const text = message.channel?.alternatives?.[0]?.transcript;
     if (!text) return;
     const latency = Math.round(performance.now() - this.startedAt);
     if (message.is_final || message.speech_final) {
       await this.audit.record({ action: "deepgram.transcript_final", risk: "read_only", status: "completed", metadata: { latency } });
-      this.send({ type: "transcript_final", text, latency_ms: latency });
+      this.send({ type: "transcript_final", text, latency_ms: latency, speech_final: Boolean(message.speech_final) });
     } else {
       this.send({ type: "transcript_interim", text, latency_ms: latency });
     }
@@ -82,4 +84,3 @@ export class DeepgramService {
     return new DeepgramRealtimeSession(this.config.deepgramApiKey, send, this.logger, this.audit);
   }
 }
-

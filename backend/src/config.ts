@@ -5,6 +5,15 @@ export type AppConfig = {
   openaiApiKey?: string;
   openaiFastModel: string;
   openaiDeepModel: string;
+  openaiEnableWebSearch: boolean;
+  openaiRealtimeEnabled: boolean;
+  openaiRealtimeModel: string;
+  openaiRealtimeReasoningEffort: string;
+  openaiRealtimeTranscriptModel: string;
+  openaiRealtimeVoice: string;
+  openaiRealtimeOutputAudio: boolean;
+  openaiVoiceReasoningEffort: string;
+  openaiDeepReasoningEffort: string;
   deepgramApiKey?: string;
   telegramBotToken?: string;
   telegramWebhookSecret?: string;
@@ -22,10 +31,15 @@ function optionalEnv(name: string): string | undefined {
   return value && value.trim() ? value.trim() : undefined;
 }
 
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const value = optionalEnv(name);
+  if (!value) return fallback;
+  return !["0", "false", "no", "off"].includes(value.toLowerCase());
+}
+
 function requiredInProduction(config: AppConfig): string[] {
   const pairs: Array<[keyof AppConfig, string]> = [
     ["openaiApiKey", "OPENAI_API_KEY"],
-    ["deepgramApiKey", "DEEPGRAM_API_KEY"],
     ["telegramBotToken", "TELEGRAM_BOT_TOKEN"],
     ["telegramWebhookSecret", "TELEGRAM_WEBHOOK_SECRET"],
     ["ownerTelegramUserId", "OWNER_TELEGRAM_USER_ID"],
@@ -35,7 +49,11 @@ function requiredInProduction(config: AppConfig): string[] {
     ["devicePairingSecret", "DEVICE_PAIRING_SECRET"],
     ["jwtSecret", "JWT_SECRET"]
   ];
-  return pairs.filter(([key]) => !config[key]).map(([, envName]) => envName);
+  const missing = pairs.filter(([key]) => !config[key]).map(([, envName]) => envName);
+  if (!config.openaiRealtimeEnabled && !config.deepgramApiKey) {
+    missing.push("DEEPGRAM_API_KEY");
+  }
+  return missing;
 }
 
 export function loadConfig(): AppConfig {
@@ -48,6 +66,15 @@ export function loadConfig(): AppConfig {
     openaiApiKey: optionalEnv("OPENAI_API_KEY"),
     openaiFastModel: optionalEnv("OPENAI_FAST_MODEL") ?? "gpt-4.1-mini",
     openaiDeepModel: optionalEnv("OPENAI_DEEP_MODEL") ?? "gpt-5.5",
+    openaiEnableWebSearch: booleanEnv("OPENAI_ENABLE_WEB_SEARCH", true),
+    openaiRealtimeEnabled: booleanEnv("OPENAI_ENABLE_REALTIME", true),
+    openaiRealtimeModel: optionalEnv("OPENAI_REALTIME_MODEL") ?? "gpt-realtime-2",
+    openaiRealtimeReasoningEffort: optionalEnv("OPENAI_REALTIME_REASONING_EFFORT") ?? "low",
+    openaiRealtimeTranscriptModel: optionalEnv("OPENAI_REALTIME_TRANSCRIPT_MODEL") ?? "gpt-realtime-whisper",
+    openaiRealtimeVoice: optionalEnv("OPENAI_REALTIME_VOICE") ?? "marin",
+    openaiRealtimeOutputAudio: booleanEnv("OPENAI_REALTIME_OUTPUT_AUDIO", false),
+    openaiVoiceReasoningEffort: optionalEnv("OPENAI_VOICE_REASONING_EFFORT") ?? "low",
+    openaiDeepReasoningEffort: optionalEnv("OPENAI_DEEP_REASONING_EFFORT") ?? "high",
     deepgramApiKey: optionalEnv("DEEPGRAM_API_KEY"),
     telegramBotToken: optionalEnv("TELEGRAM_BOT_TOKEN"),
     telegramWebhookSecret: optionalEnv("TELEGRAM_WEBHOOK_SECRET"),
@@ -69,6 +96,7 @@ export function readiness(config: AppConfig) {
     missing,
     configured: {
       openai: Boolean(config.openaiApiKey),
+      openaiRealtime: Boolean(config.openaiApiKey && config.openaiRealtimeEnabled),
       deepgram: Boolean(config.deepgramApiKey),
       telegram: Boolean(config.telegramBotToken && config.telegramWebhookSecret && config.ownerTelegramUserId),
       google: Boolean(config.googleClientId && config.googleClientSecret),
@@ -78,4 +106,3 @@ export function readiness(config: AppConfig) {
     }
   };
 }
-

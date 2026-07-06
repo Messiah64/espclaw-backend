@@ -19,6 +19,7 @@ import { GoogleOAuthService } from "./google_oauth_service.js";
 import { MemoryService } from "./memory_service.js";
 import { OpenAIService } from "./openai_service.js";
 import { PermissionService } from "./permission_service.js";
+import { RealtimeVoiceService } from "./realtime_voice_service.js";
 import { TelegramService } from "./telegram_service.js";
 import { TtsService } from "./tts_service.js";
 
@@ -56,6 +57,7 @@ export function createServices(config: AppConfig, logger: FastifyBaseLogger) {
   ].forEach((tool) => tools.register(tool));
 
   const openai = new OpenAIService(config, tools, memory, auditLog, logger);
+  const realtimeVoice = new RealtimeVoiceService(config, tools, auditLog, logger);
 
   return {
     pool,
@@ -73,6 +75,7 @@ export function createServices(config: AppConfig, logger: FastifyBaseLogger) {
     tts,
     tools,
     openai,
+    realtimeVoice,
     registerDevicePusher(deviceId: string, push: DevicePush) {
       devicePushers.set(deviceId, push);
     },
@@ -81,4 +84,3 @@ export function createServices(config: AppConfig, logger: FastifyBaseLogger) {
     }
   };
 }
-

@@ -1,6 +1,13 @@
 export type DeviceToBackendEvent =
   | { type: "device_hello"; device_id: string; device_token: string; firmware?: string }
-  | { type: "audio_start"; conversation_id?: string; sample_rate?: number; encoding?: string }
+  | {
+      type: "audio_start";
+      conversation_id?: string;
+      sample_rate?: number;
+      encoding?: string;
+      mode?: "push_to_talk" | "always";
+      auto_respond?: boolean;
+    }
   | { type: "audio_chunk"; audio_b64: string; sequence?: number }
   | { type: "audio_end" }
   | { type: "text_input"; text: string; mode?: "voice" | "deep" }
@@ -14,7 +21,7 @@ export type BackendToDeviceEvent =
   | { type: "auth_failed"; reason: string }
   | { type: "state_update"; state: Record<string, unknown> }
   | { type: "transcript_interim"; text: string; latency_ms?: number }
-  | { type: "transcript_final"; text: string; latency_ms?: number }
+  | { type: "transcript_final"; text: string; latency_ms?: number; speech_final?: boolean }
   | { type: "assistant_thinking"; active: boolean }
   | { type: "tool_call_started"; tool_call_id: string; tool_name: string }
   | { type: "tool_call_finished"; tool_call_id: string; tool_name: string; ok: boolean; summary?: string }

@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "../config.js";
 import type { createServices } from "../services/index.js";
 import type { DeepgramRealtimeSession } from "../services/deepgram_service.js";
+import type { RealtimeVoiceSession } from "../services/realtime_voice_service.js";
 import type { BackendToDeviceEvent, DeviceToBackendEvent } from "../types/protocol.js";
 import { parseDeviceEvent } from "../types/protocol.js";
 
@@ -27,7 +28,12 @@ export async function registerDeviceWebSocket(
     let authenticated = false;
     let deviceId = "";
     let deepgramSession: DeepgramRealtimeSession | undefined;
+    let realtimeSession: RealtimeVoiceSession | undefined;
     let latestFinalTranscript = "";
+    let pendingTranscript = "";
+    let audioAutoRespond = false;
+    let assistantBusy = false;
+    let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
 
     const sendToThisDevice = (_targetDeviceId: string, event: BackendToDeviceEvent) => {
       send(socket, event);
@@ -37,6 +43,71 @@ export async function registerDeviceWebSocket(
     const heartbeat = setInterval(() => {
       if (authenticated) send(socket, { type: "pong", id: "backend-heartbeat", ts: Date.now() });
     }, 60_000);
+
+    async function runAssistantForText(text: string, mode: "voice" | "deep" = "voice") {
+      const trimmed = text.trim();
+      if (!trimmed || assistantBusy) return;
+      assistantBusy = true;
+      try {
+        send(socket, { type: "assistant_thinking", active: true });
+        const reply = await services.openai.respond({
+          userId: "owner",
+          deviceId,
+          text: trimmed,
+          mode
+        });
+        send(socket, { type: "response_text", text: reply });
+        const tts = await services.tts.synthesizeShortReply(reply);
+        for (const chunk of tts.chunks) {
+          send(socket, { type: "tts_audio_chunk", audio_b64: chunk.toString("base64"), mime_type: tts.mimeType });
+        }
+        send(socket, { type: "tts_audio_end" });
+      } catch (error) {
+        request.log.error({ error, deviceId }, "assistant response failed");
+        send(socket, { type: "error", code: "assistant_failed", message: "Assistant response failed." });
+      } finally {
+        assistantBusy = false;
+        send(socket, { type: "assistant_thinking", active: false });
+      }
+    }
+
+    function clearTranscriptTimer() {
+      if (transcriptTimer) {
+        clearTimeout(transcriptTimer);
+        transcriptTimer = undefined;
+      }
+    }
+
+    async function startDeepgramFallback(event: Extract<DeviceToBackendEvent, { type: "audio_start" }>) {
+      deepgramSession = services.deepgram.createRealtimeSession((out) => {
+        send(socket, out);
+        if (out.type === "transcript_final") {
+          latestFinalTranscript = out.text;
+          if (audioAutoRespond) scheduleAlwaysReply(out.text, out.speech_final);
+        }
+      });
+      deepgramSession?.start(event.sample_rate, event.encoding);
+      send(socket, {
+        type: "state_update",
+        state: {
+          audio_streaming: Boolean(deepgramSession),
+          audio_mode: audioAutoRespond ? "always" : "push_to_talk",
+          audio_provider: "deepgram"
+        }
+      });
+    }
+
+    function scheduleAlwaysReply(text: string, speechFinal = false) {
+      const trimmed = text.trim();
+      if (!trimmed || trimmed.length < 3) return;
+      pendingTranscript = [pendingTranscript, trimmed].filter(Boolean).join(" ").slice(-2000);
+      clearTranscriptTimer();
+      transcriptTimer = setTimeout(() => {
+        const prompt = pendingTranscript.trim();
+        pendingTranscript = "";
+        void runAssistantForText(prompt, "voice");
+      }, speechFinal ? 200 : 700);
+    }
 
     async function authenticate(event: Extract<DeviceToBackendEvent, { type: "device_hello" }>) {
       const ok = await services.deviceAuth.verify(event.device_id, event.device_token);
@@ -78,58 +149,69 @@ export async function registerDeviceWebSocket(
           break;
         case "audio_start":
           latestFinalTranscript = "";
-          deepgramSession = services.deepgram.createRealtimeSession((out) => {
-            send(socket, out);
-            if (out.type === "transcript_final") latestFinalTranscript = out.text;
-          });
-          deepgramSession?.start(event.sample_rate, event.encoding);
+          pendingTranscript = "";
+          audioAutoRespond = event.mode === "always" || event.auto_respond === true;
+          clearTranscriptTimer();
+          realtimeSession?.finish();
+          deepgramSession?.finish();
+          realtimeSession = undefined;
+          deepgramSession = undefined;
+          if (services.realtimeVoice.isConfigured()) {
+            realtimeSession = services.realtimeVoice.createSession({
+              userId: "owner",
+              deviceId,
+              sampleRate: event.sample_rate ?? 24000,
+              autoRespond: audioAutoRespond,
+              send: (out) => send(socket, out)
+            });
+            try {
+              await realtimeSession?.start();
+              send(socket, {
+                type: "state_update",
+                state: {
+                  audio_streaming: true,
+                  audio_mode: audioAutoRespond ? "always" : "push_to_talk",
+                  audio_provider: "openai_realtime"
+                }
+              });
+            } catch (error) {
+              request.log.error({ error, deviceId }, "openai realtime start failed; falling back to deepgram");
+              realtimeSession?.finish();
+              realtimeSession = undefined;
+              send(socket, {
+                type: "error",
+                code: "openai_realtime_start_failed",
+                message: "OpenAI Realtime failed to start; falling back to Deepgram transcription."
+              });
+              await startDeepgramFallback(event);
+            }
+          } else {
+            await startDeepgramFallback(event);
+          }
           break;
         case "audio_chunk":
-          deepgramSession?.sendAudio(Buffer.from(event.audio_b64, "base64"));
+          if (realtimeSession) {
+            await realtimeSession.sendAudio(Buffer.from(event.audio_b64, "base64"));
+          } else {
+            deepgramSession?.sendAudio(Buffer.from(event.audio_b64, "base64"));
+          }
           break;
         case "audio_end":
-          deepgramSession?.finish();
-          deepgramSession = undefined;
-          if (latestFinalTranscript.trim()) {
-            try {
-              send(socket, { type: "assistant_thinking", active: true });
-              const reply = await services.openai.respond({
-                userId: "owner",
-                deviceId,
-                text: latestFinalTranscript,
-                mode: "voice"
-              });
-              send(socket, { type: "response_text", text: reply });
-              const tts = await services.tts.synthesizeShortReply(reply);
-              for (const chunk of tts.chunks) {
-                send(socket, { type: "tts_audio_chunk", audio_b64: chunk.toString("base64"), mime_type: tts.mimeType });
-              }
-              send(socket, { type: "tts_audio_end" });
-            } catch (error) {
-              request.log.error({ error, deviceId }, "audio assistant response failed");
-              send(socket, { type: "error", code: "assistant_failed", message: "Assistant response failed." });
-            } finally {
-              send(socket, { type: "assistant_thinking", active: false });
-            }
+          clearTranscriptTimer();
+          if (realtimeSession) {
+            await realtimeSession.stopInput();
+            realtimeSession = undefined;
+            send(socket, { type: "state_update", state: { audio_streaming: false } });
+          } else {
+            deepgramSession?.finish();
+            deepgramSession = undefined;
+            send(socket, { type: "state_update", state: { audio_streaming: false } });
+            if (latestFinalTranscript.trim()) await runAssistantForText(latestFinalTranscript, "voice");
           }
           break;
         case "text_input":
           if (event.text.trim()) {
-            try {
-              send(socket, { type: "assistant_thinking", active: true });
-              const reply = await services.openai.respond({
-                userId: "owner",
-                deviceId,
-                text: event.text,
-                mode: event.mode ?? "voice"
-              });
-              send(socket, { type: "response_text", text: reply });
-            } catch (error) {
-              request.log.error({ error, deviceId }, "text assistant response failed");
-              send(socket, { type: "error", code: "assistant_failed", message: "Assistant response failed." });
-            } finally {
-              send(socket, { type: "assistant_thinking", active: false });
-            }
+            await runAssistantForText(event.text, event.mode ?? "voice");
           }
           break;
         default:
@@ -141,7 +223,11 @@ export async function registerDeviceWebSocket(
     socket.on("message", (data, isBinary) => {
       void (async () => {
         if (isBinary) {
-          deepgramSession?.sendAudio(rawToBuffer(data));
+          if (realtimeSession) {
+            await realtimeSession.sendAudio(rawToBuffer(data));
+          } else {
+            deepgramSession?.sendAudio(rawToBuffer(data));
+          }
           return;
         }
         const event = parseDeviceEvent(data.toString());
@@ -155,6 +241,8 @@ export async function registerDeviceWebSocket(
 
     socket.on("close", () => {
       clearInterval(heartbeat);
+      clearTranscriptTimer();
+      realtimeSession?.finish();
       deepgramSession?.finish();
       if (deviceId) services.unregisterDevicePusher(deviceId);
       request.log.info({ deviceId }, "device websocket closed");
