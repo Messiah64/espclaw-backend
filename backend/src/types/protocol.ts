@@ -3,6 +3,7 @@ export type DeviceToBackendEvent =
   | { type: "audio_start"; conversation_id?: string; sample_rate?: number; encoding?: string }
   | { type: "audio_chunk"; audio_b64: string; sequence?: number }
   | { type: "audio_end" }
+  | { type: "text_input"; text: string; mode?: "voice" | "deep" }
   | { type: "touch_to_talk"; active: boolean }
   | { type: "mute_toggle"; muted: boolean }
   | { type: "ping"; id?: string; ts?: number }
@@ -31,4 +32,3 @@ export function parseDeviceEvent(raw: string): DeviceToBackendEvent | null {
     return null;
   }
 }
-

@@ -107,6 +107,19 @@ export async function registerDeviceWebSocket(
             send(socket, { type: "tts_audio_end" });
           }
           break;
+        case "text_input":
+          if (event.text.trim()) {
+            send(socket, { type: "assistant_thinking", active: true });
+            const reply = await services.openai.respond({
+              userId: "owner",
+              deviceId,
+              text: event.text,
+              mode: event.mode ?? "voice"
+            });
+            send(socket, { type: "assistant_thinking", active: false });
+            send(socket, { type: "response_text", text: reply });
+          }
+          break;
         default:
           send(socket, { type: "error", code: "unknown_event", message: `Unhandled event ${event.type}` });
           break;
@@ -136,4 +149,3 @@ export async function registerDeviceWebSocket(
     });
   });
 }
-
