@@ -20,8 +20,11 @@ export function deviceTools(pushToDevice: DevicePush): RegisteredTool[] {
         additionalProperties: false
       },
       handler: async (args, context) => {
-        const targetDeviceId = stringArg(args, "device_id", context.deviceId ?? "");
-        const ok = pushToDevice(targetDeviceId, { type: "response_text", text: stringArg(args, "text") });
+        const text = stringArg(args, "text");
+        const requestedDeviceId = stringArg(args, "device_id").trim();
+        const contextDeviceId = context.deviceId?.trim() ?? "";
+        const candidates = [...new Set([requestedDeviceId, contextDeviceId].filter(Boolean))];
+        const ok = candidates.some((deviceId) => pushToDevice(deviceId, { type: "response_text", text }));
         return { ok, text: ok ? "Text sent to device." : "Device is not connected." };
       }
     }
