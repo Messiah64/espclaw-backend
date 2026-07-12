@@ -19,6 +19,7 @@ type RealtimeSessionOptions = {
   sampleRate: number;
   autoRespond: boolean;
   send: DeviceSender;
+  onFinalTranscript?: (text: string) => void;
 };
 
 function safeJsonParse(value: string): Record<string, unknown> {
@@ -40,7 +41,6 @@ function hashSafetyId(value: string): string {
 }
 
 const DEVICE_AUDIO_B64_CHARS = 2400;
-const AUDIO_MODALITIES = ["audio"];
 const TEXT_MODALITIES = ["text"];
 
 export class RealtimeVoiceSession {
@@ -51,6 +51,7 @@ export class RealtimeVoiceSession {
   private startedAt = Date.now();
   private assistantText = "";
   private assistantTranscript = "";
+  private userTranscript = "";
   private openPromise: Promise<void>;
 
   constructor(
@@ -104,8 +105,8 @@ export class RealtimeVoiceSession {
       session: {
         type: "realtime",
         model: this.config.openaiRealtimeModel,
-        output_modalities: this.outputModalities(),
-        instructions: this.instructions(),
+        output_modalities: TEXT_MODALITIES,
+        instructions: "Transcribe the microphone accurately. Do not answer the user; the text agent handles responses.",
         reasoning: this.config.openaiRealtimeReasoningEffort
           ? { effort: this.config.openaiRealtimeReasoningEffort }
           : undefined,
@@ -123,8 +124,8 @@ export class RealtimeVoiceSession {
             turn_detection: this.options.autoRespond
               ? {
                   type: "semantic_vad",
-                  create_response: true,
-                  interrupt_response: true
+                  create_response: false,
+                  interrupt_response: false
                 }
               : null
           },
@@ -133,8 +134,8 @@ export class RealtimeVoiceSession {
             voice: this.config.openaiRealtimeVoice
           }
         },
-        tools: this.tools.openAiTools(),
-        tool_choice: "auto",
+        tools: [],
+        tool_choice: "none",
         truncation: {
           type: "retention_ratio",
           retention_ratio: 0.8,
@@ -149,7 +150,7 @@ export class RealtimeVoiceSession {
       state: {
         openai_realtime: "connected",
         realtime_model: this.config.openaiRealtimeModel,
-        realtime_output_audio: this.config.openaiRealtimeOutputAudio,
+        realtime_output_audio: false,
         realtime_sample_rate: this.options.sampleRate
       }
     });
@@ -176,12 +177,7 @@ export class RealtimeVoiceSession {
         content: [{ type: "input_text", text: trimmed }]
       }
     });
-    this.send({
-      type: "response.create",
-      response: {
-        output_modalities: this.outputModalities()
-      }
-    });
+    this.options.onFinalTranscript?.(trimmed);
   }
 
   async stopInput(): Promise<void> {
@@ -190,12 +186,6 @@ export class RealtimeVoiceSession {
     this.closeAfterResponse = true;
     if (!this.options.autoRespond) {
       this.send({ type: "input_audio_buffer.commit" });
-      this.send({
-        type: "response.create",
-        response: {
-          output_modalities: this.outputModalities()
-        }
-      });
       return;
     }
     setTimeout(() => this.finish(), 750);
@@ -211,23 +201,6 @@ export class RealtimeVoiceSession {
     }
   }
 
-  private instructions(): string {
-    return [
-      "You are ESPClaw, a private always-listening desktop assistant running through an ESP32-S3-BOX-3B.",
-      "The active device is ESP32-S3-BOX-3B. It has a touch display, buttons, microphones, speaker hardware, IMU, and environmental sensors. Do not assume an ESP32-C3-LCDkit, rotary knob, or IR receiver.",
-      "Optimize for speed and accuracy. Use concise spoken-style answers that fit on the small display, usually one or two short sentences.",
-      "If the user asks for an exact reply, simple echo, health check, or conversational answer, reply directly and do not call tools.",
-      "If asked what powers the voice device, say ESPClaw is using OpenAI Realtime gpt-realtime-2 through the Render backend.",
-      "Do not claim you lack your own model label when this device context already names it.",
-      "Use Gmail, Calendar, Drive, Contacts, Telegram, and device tools directly when they are required or clearly helpful.",
-      "Never reveal backend secrets, API keys, tokens, refresh tokens, or internal credentials.",
-      "Read-only actions, searches, summaries, and drafts should proceed without extra confirmation.",
-      "Sending emails, deleting data, changing access, purchases, or destructive account actions must go through the permission flow and may return pending approval.",
-      "When audio is unclear, ask a brief clarifying question instead of inventing missing facts.",
-      "The device speaker is enabled by default at low volume; still keep replies concise for the small display."
-    ].join("\n");
-  }
-
   private send(event: Record<string, unknown>): void {
     if (this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(event));
@@ -235,7 +208,7 @@ export class RealtimeVoiceSession {
   }
 
   private outputModalities(): string[] {
-    return this.config.openaiRealtimeOutputAudio ? AUDIO_MODALITIES : TEXT_MODALITIES;
+    return TEXT_MODALITIES;
   }
 
   private async handleMessage(raw: string): Promise<void> {
@@ -246,6 +219,8 @@ export class RealtimeVoiceSession {
         this.logger.debug({ type: event.type, deviceId: this.options.deviceId }, "realtime session event");
         break;
       case "input_audio_buffer.speech_started":
+        this.startedAt = Date.now();
+        this.userTranscript = "";
         this.options.send({ type: "assistant_thinking", active: false });
         this.options.send({ type: "state_update", state: { user_speaking: true } });
         break;
@@ -254,11 +229,14 @@ export class RealtimeVoiceSession {
         break;
       case "conversation.item.input_audio_transcription.delta":
         if (typeof event.delta === "string" && event.delta) {
-          this.options.send({ type: "transcript_interim", text: event.delta });
+          this.userTranscript += event.delta;
+          this.options.send({ type: "transcript_interim", text: this.userTranscript.trim() });
         }
         break;
       case "conversation.item.input_audio_transcription.completed":
         if (typeof event.transcript === "string" && event.transcript.trim()) {
+          this.userTranscript = event.transcript.trim();
+          this.options.onFinalTranscript?.(event.transcript.trim());
           this.options.send({
             type: "transcript_final",
             text: event.transcript.trim(),

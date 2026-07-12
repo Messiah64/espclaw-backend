@@ -29,6 +29,7 @@ export async function buildServer(config: AppConfig): Promise<FastifyInstance> {
   await registerTelegramRoutes(server, config, services.telegram, services.permission);
   await registerDeviceRoutes(server, config, services.deviceAuth, services.auditLog);
   await registerDeviceWebSocket(server, config, services);
+  server.addHook("onClose", async () => services.monitors.stop());
 
   server.setErrorHandler((error, request, reply) => {
     request.log.error(error);

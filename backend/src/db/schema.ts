@@ -50,12 +50,24 @@ export const conversations = pgTable("conversations", {
 export const memories = pgTable("memories", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").references(() => users.id),
+  ownerKey: text("owner_key").default("owner").notNull(),
   key: text("key").notNull(),
   value: text("value").notNull(),
   source: text("source"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
+
+export const conversationMessages = pgTable("conversation_messages", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  ownerKey: text("owner_key").default("owner").notNull(),
+  deviceId: text("device_id"),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (table) => ({
+  ownerCreatedIdx: index("conversation_messages_owner_created_idx").on(table.ownerKey, table.createdAt)
+}));
 
 export const actionLogs = pgTable("action_logs", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -71,6 +83,7 @@ export const actionLogs = pgTable("action_logs", {
 export const pendingApprovals = pgTable("pending_approvals", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").references(() => users.id),
+  ownerKey: text("owner_key").default("owner").notNull(),
   action: text("action").notNull(),
   risk: text("risk").notNull(),
   payload: jsonb("payload").default({}).notNull(),
@@ -79,5 +92,18 @@ export const pendingApprovals = pgTable("pending_approvals", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 });
 
-export type DeviceRow = typeof devices.$inferSelect;
+export const agentMonitors = pgTable("agent_monitors", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  ownerKey: text("owner_key").default("owner").notNull(),
+  kind: text("kind").notNull(),
+  query: text("query").notNull(),
+  label: text("label"),
+  lastFingerprint: text("last_fingerprint"),
+  enabled: boolean("enabled").default(true).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+}, (table) => ({
+  ownerEnabledIdx: index("agent_monitors_owner_enabled_idx").on(table.ownerKey, table.enabled)
+}));
 
+export type DeviceRow = typeof devices.$inferSelect;

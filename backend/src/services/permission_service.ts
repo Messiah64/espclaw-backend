@@ -3,19 +3,27 @@ import { eq } from "drizzle-orm";
 import type { AppConfig } from "../config.js";
 import type { DbClient } from "../db/client.js";
 import { pendingApprovals } from "../db/schema.js";
-import type { ToolRiskLevel } from "../types/assistant.js";
+import type { ToolExecutionResult, ToolRiskLevel } from "../types/assistant.js";
 import { AuditLogService } from "./audit_log_service.js";
 import { TelegramService } from "./telegram_service.js";
 
-const memoryApprovals = new Map<string, { action: string; risk: ToolRiskLevel; payload: unknown; approved?: boolean }>();
+type ApprovalRecord = { ownerKey: string; action: string; risk: ToolRiskLevel; payload: unknown; approved?: boolean };
+type ApprovalExecutor = (payload: unknown) => Promise<ToolExecutionResult>;
+
+const memoryApprovals = new Map<string, ApprovalRecord>();
 
 export class PermissionService {
+  private readonly executors = new Map<string, ApprovalExecutor>();
   constructor(
     private readonly config: AppConfig,
     private readonly db: DbClient | undefined,
     private readonly audit: AuditLogService,
     private readonly telegram: TelegramService
   ) {}
+
+  registerExecutor(action: string, executor: ApprovalExecutor): void {
+    this.executors.set(action, executor);
+  }
 
   async authorize(input: {
     userId: string;
@@ -51,27 +59,61 @@ export class PermissionService {
   async createApproval(userId: string, action: string, risk: ToolRiskLevel, payload: unknown): Promise<string> {
     const id = randomUUID();
     if (!this.db) {
-      memoryApprovals.set(id, { action, risk, payload });
+      memoryApprovals.set(id, { ownerKey: userId, action, risk, payload });
       return id;
     }
-    await this.db.insert(pendingApprovals).values({ id, userId, action, risk, payload: payload as Record<string, unknown> });
+    await this.db.insert(pendingApprovals).values({ id, ownerKey: userId, action, risk, payload: payload as Record<string, unknown> });
     return id;
   }
 
-  async decide(approvalId: string, approved: boolean): Promise<boolean> {
+  async decide(approvalId: string, approved: boolean): Promise<{ found: boolean; message: string }> {
+    let approval: ApprovalRecord | undefined;
     if (!this.db) {
-      const approval = memoryApprovals.get(approvalId);
-      if (!approval) return false;
+      approval = memoryApprovals.get(approvalId);
+      if (!approval) return { found: false, message: "Approval ID not found." };
+      if (approval.approved !== undefined) return { found: true, message: "This approval was already decided." };
       approval.approved = approved;
       memoryApprovals.set(approvalId, approval);
-      return true;
+    } else {
+      const existing = await this.db.select().from(pendingApprovals).where(eq(pendingApprovals.id, approvalId)).limit(1);
+      if (!existing[0]) return { found: false, message: "Approval ID not found." };
+      if (existing[0].decidedAt) return { found: true, message: "This approval was already decided." };
+      approval = {
+        ownerKey: existing[0].ownerKey,
+        action: existing[0].action,
+        risk: existing[0].risk as ToolRiskLevel,
+        payload: existing[0].payload,
+        approved
+      };
+      await this.db.update(pendingApprovals)
+        .set({ approved, decidedAt: new Date() })
+        .where(eq(pendingApprovals.id, approvalId));
     }
-    const rows = await this.db
-      .update(pendingApprovals)
-      .set({ approved, decidedAt: new Date() })
-      .where(eq(pendingApprovals.id, approvalId))
-      .returning();
-    return rows.length > 0;
+
+    if (!approved) {
+      await this.audit.record({ action: approval.action, risk: approval.risk, status: "denied", metadata: { approvalId } });
+      return { found: true, message: `Denied ${approval.action}.` };
+    }
+
+    const executor = this.executors.get(approval.action);
+    if (!executor) {
+      await this.audit.record({ action: approval.action, risk: approval.risk, status: "approved", metadata: { approvalId } });
+      return { found: true, message: `Approved ${approval.action}; no executor is registered.` };
+    }
+
+    try {
+      const result = await executor(approval.payload);
+      await this.audit.record({
+        action: approval.action,
+        risk: approval.risk,
+        status: result.ok ? "completed" : "failed",
+        metadata: { approvalId }
+      });
+      return { found: true, message: result.text };
+    } catch (error) {
+      await this.audit.record({ action: approval.action, risk: approval.risk, status: "failed", metadata: { approvalId } });
+      return { found: true, message: `Approved action failed: ${error instanceof Error ? error.message : "unknown error"}` };
+    }
   }
 
   async status(): Promise<string> {
@@ -82,4 +124,3 @@ export class PermissionService {
     ].join("\n");
   }
 }
-

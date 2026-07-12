@@ -6,6 +6,8 @@ import { contactsTools } from "../tools/contacts_tools.js";
 import { deviceTools, type DevicePush } from "../tools/device_tools.js";
 import { driveTools } from "../tools/drive_tools.js";
 import { gmailTools } from "../tools/gmail_tools.js";
+import { memoryTools } from "../tools/memory_tools.js";
+import { monitorTools } from "../tools/monitor_tools.js";
 import { telegramTools } from "../tools/telegram_tools.js";
 import { ToolRegistry } from "../tools/tool_registry.js";
 import { AuditLogService } from "./audit_log_service.js";
@@ -17,6 +19,7 @@ import { DriveService } from "./drive_service.js";
 import { GmailService } from "./gmail_service.js";
 import { GoogleOAuthService } from "./google_oauth_service.js";
 import { MemoryService } from "./memory_service.js";
+import { MonitorService } from "./monitor_service.js";
 import { OpenAIService } from "./openai_service.js";
 import { PermissionService } from "./permission_service.js";
 import { RealtimeVoiceService } from "./realtime_voice_service.js";
@@ -40,11 +43,18 @@ export function createServices(config: AppConfig, logger: FastifyBaseLogger) {
   const deepgram = new DeepgramService(config, auditLog, logger);
   const tts = new TtsService(config, logger);
 
+  permission.registerExecutor("gmail.send", (payload) => gmail.executeApprovedSend(payload));
+  permission.registerExecutor("calendar.create", (payload) => calendar.executeApprovedCreate(payload));
+
   const pushToDevice: DevicePush = (deviceId, event) => {
     const push = devicePushers.get(deviceId);
     if (!push) return false;
     return push(deviceId, event);
   };
+  const broadcastToDevices = (event: Parameters<DevicePush>[1]) => {
+    for (const [deviceId, push] of devicePushers) push(deviceId, event);
+  };
+  const monitors = new MonitorService(db, gmail, telegram, broadcastToDevices, logger);
 
   const tools = new ToolRegistry();
   [
@@ -53,16 +63,20 @@ export function createServices(config: AppConfig, logger: FastifyBaseLogger) {
     ...driveTools(drive),
     ...contactsTools(contacts),
     ...telegramTools(telegram),
+    ...memoryTools(memory),
+    ...monitorTools(monitors),
     ...deviceTools(pushToDevice)
   ].forEach((tool) => tools.register(tool));
 
   const openai = new OpenAIService(config, tools, memory, auditLog, logger);
   const realtimeVoice = new RealtimeVoiceService(config, tools, auditLog, logger);
+  monitors.start();
 
   return {
     pool,
     auditLog,
     memory,
+    monitors,
     telegram,
     permission,
     googleOAuth,

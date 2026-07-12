@@ -69,12 +69,26 @@ export async function ensureDatabaseSchema(pool: pg.Pool | undefined, logger?: F
     create table if not exists memories (
       id uuid primary key default gen_random_uuid(),
       user_id uuid references users(id),
+      owner_key text not null default 'owner',
       key text not null,
       value text not null,
       source text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
+    alter table memories add column if not exists owner_key text not null default 'owner';
+    create unique index if not exists memories_owner_key_key_idx on memories(owner_key, key);
+
+    create table if not exists conversation_messages (
+      id uuid primary key default gen_random_uuid(),
+      owner_key text not null default 'owner',
+      device_id text,
+      role text not null,
+      content text not null,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists conversation_messages_owner_created_idx
+      on conversation_messages(owner_key, created_at desc);
 
     create table if not exists action_logs (
       id uuid primary key default gen_random_uuid(),
@@ -90,6 +104,7 @@ export async function ensureDatabaseSchema(pool: pg.Pool | undefined, logger?: F
     create table if not exists pending_approvals (
       id uuid primary key default gen_random_uuid(),
       user_id uuid references users(id),
+      owner_key text not null default 'owner',
       action text not null,
       risk text not null,
       payload jsonb not null default '{}'::jsonb,
@@ -97,6 +112,20 @@ export async function ensureDatabaseSchema(pool: pg.Pool | undefined, logger?: F
       decided_at timestamptz,
       created_at timestamptz not null default now()
     );
+    alter table pending_approvals add column if not exists owner_key text not null default 'owner';
+
+    create table if not exists agent_monitors (
+      id uuid primary key default gen_random_uuid(),
+      owner_key text not null default 'owner',
+      kind text not null,
+      query text not null,
+      label text,
+      last_fingerprint text,
+      enabled boolean not null default true,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists agent_monitors_owner_enabled_idx on agent_monitors(owner_key, enabled);
   `;
   await pool.query(sql);
   logger?.info("database schema ready");

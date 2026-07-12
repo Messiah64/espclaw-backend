@@ -56,7 +56,7 @@ export class OpenAIService {
   private openAiTools(includeBuiltIns: boolean): Array<Record<string, unknown>> {
     const tools = this.tools.openAiTools();
     if (includeBuiltIns && this.config.openaiEnableWebSearch) {
-      tools.push({ type: "web_search_preview" });
+      tools.push({ type: "web_search" });
     }
     return tools;
   }
@@ -109,8 +109,12 @@ export class OpenAIService {
 
     const model = input.mode === "deep" ? this.config.openaiDeepModel : this.config.openaiFastModel;
     let memories: Array<{ key: string; value: string }> = [];
+    let recentConversation: Array<{ role: string; content: string }> = [];
     try {
-      memories = await this.withTimeout(this.memory.recall(input.userId), 2500, "memory_recall");
+      [memories, recentConversation] = await Promise.all([
+        this.withTimeout(this.memory.recall(input.userId), 2500, "memory_recall"),
+        this.withTimeout(this.memory.recentConversation(input.userId, 8), 2500, "conversation_recall")
+      ]);
     } catch (error) {
       this.logger.warn({ error }, "memory recall skipped");
     }
@@ -119,15 +123,19 @@ export class OpenAIService {
       "You are ESPClaw, a private desktop assistant connected to an ESP32-S3-BOX-3B.",
       "The device is an ESP32-S3-BOX-3B with touch display, buttons, microphones, speaker hardware, IMU, and environmental sensors. Do not assume a rotary knob, IR receiver, or ESP32-C3-LCDkit hardware.",
       "You are a fast desktop operations assistant. Act directly when the user's intent is clear.",
-      "Keep voice replies short, natural, and useful. Prefer one or two sentences unless the user asks for detail.",
+      "The microphone is always listening, but spoken output is disabled. Return concise, screen-readable text.",
+      "Prefer a short direct answer first. Use more detail only when it materially helps.",
       "If the user asks for an exact reply, simple echo, health check, or conversational answer, reply directly and do not call tools.",
-      "If asked what powers the voice device, say ESPClaw is using OpenAI Realtime gpt-realtime-2 through the Render backend.",
+      "If asked what powers the listening device, say ESPClaw uses OpenAI Realtime transcription plus GPT-5.5 through the Render backend.",
       "Do not claim you lack your own model label when this device context already names it.",
       "Never reveal backend secrets, API keys, tokens, refresh tokens, or internal credentials.",
       "Use Gmail, Calendar, Drive, Contacts, Telegram, device display, and web search tools when they are required or clearly helpful.",
       "Read-only actions, searches, summaries, and drafts should proceed without extra confirmation.",
       "Sending emails, deleting data, changing access, purchases, or destructive account actions must go through the permission flow and may return pending approval.",
-      memories.length ? `Relevant memory: ${memories.map((m) => `${m.key}=${m.value}`).join("; ")}` : ""
+      "Use memory_remember when the user states a durable preference, identity fact, project detail, or explicitly says to remember something.",
+      "Use memory_forget only when the user explicitly asks you to forget a stored fact.",
+      memories.length ? `Persistent memory: ${memories.map((m) => `${m.key}=${m.value}`).join("; ")}` : "",
+      recentConversation.length ? `Recent conversation:\n${recentConversation.map((m) => `${m.role}: ${m.content}`).join("\n")}` : ""
     ].filter(Boolean).join("\n");
 
     const context: ToolExecutionContext = {
@@ -136,6 +144,9 @@ export class OpenAIService {
     };
 
     try {
+      await this.memory.appendConversation(input.userId, input.deviceId, "user", input.text).catch((error) => {
+        this.logger.warn({ error }, "conversation user turn not persisted");
+      });
       let response = await this.createResponse({
         model,
         instructions,
@@ -175,6 +186,9 @@ export class OpenAIService {
       }
 
       const text = this.extractText(response) || "Done.";
+      await this.memory.appendConversation(input.userId, input.deviceId, "assistant", text).catch((error) => {
+        this.logger.warn({ error }, "conversation assistant turn not persisted");
+      });
       this.logger.info({ model, chars: text.length }, "openai response completed");
       return text;
     } catch (error) {

@@ -29,7 +29,11 @@ export class ToolRegistry {
   async run(name: string, args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const tool = this.tools.get(name);
     if (!tool) return { ok: false, text: `Unknown tool: ${name}` };
-    return tool.handler(args, context);
+    try {
+      return await tool.handler(args, context);
+    } catch (error) {
+      return { ok: false, text: error instanceof Error ? error.message : `Tool ${name} failed.` };
+    }
   }
 }
 
@@ -41,4 +45,3 @@ export function stringArg(args: Record<string, unknown>, key: string, fallback =
 export function risk(_level: ToolRiskLevel): ToolRiskLevel {
   return _level;
 }
-

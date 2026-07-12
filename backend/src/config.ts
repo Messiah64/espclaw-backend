@@ -12,6 +12,7 @@ export type AppConfig = {
   openaiRealtimeTranscriptModel: string;
   openaiRealtimeVoice: string;
   openaiRealtimeOutputAudio: boolean;
+  assistantVoiceOutputEnabled: boolean;
   openaiVoiceReasoningEffort: string;
   openaiDeepReasoningEffort: string;
   deepgramApiKey?: string;
@@ -64,15 +65,16 @@ export function loadConfig(): AppConfig {
     port: Number.isFinite(port) ? port : 3000,
     publicBaseUrl,
     openaiApiKey: optionalEnv("OPENAI_API_KEY"),
-    openaiFastModel: optionalEnv("OPENAI_FAST_MODEL") ?? "gpt-4.1-mini",
+    openaiFastModel: optionalEnv("OPENAI_FAST_MODEL") ?? "gpt-5.5",
     openaiDeepModel: optionalEnv("OPENAI_DEEP_MODEL") ?? "gpt-5.5",
     openaiEnableWebSearch: booleanEnv("OPENAI_ENABLE_WEB_SEARCH", true),
     openaiRealtimeEnabled: booleanEnv("OPENAI_ENABLE_REALTIME", true),
-    openaiRealtimeModel: optionalEnv("OPENAI_REALTIME_MODEL") ?? "gpt-realtime-2",
+    openaiRealtimeModel: optionalEnv("OPENAI_REALTIME_MODEL") ?? "gpt-realtime-2.1",
     openaiRealtimeReasoningEffort: optionalEnv("OPENAI_REALTIME_REASONING_EFFORT") ?? "low",
     openaiRealtimeTranscriptModel: optionalEnv("OPENAI_REALTIME_TRANSCRIPT_MODEL") ?? "gpt-realtime-whisper",
     openaiRealtimeVoice: optionalEnv("OPENAI_REALTIME_VOICE") ?? "marin",
-    openaiRealtimeOutputAudio: booleanEnv("OPENAI_REALTIME_OUTPUT_AUDIO", true),
+    openaiRealtimeOutputAudio: booleanEnv("OPENAI_REALTIME_OUTPUT_AUDIO", false),
+    assistantVoiceOutputEnabled: booleanEnv("ASSISTANT_VOICE_OUTPUT_ENABLED", false),
     openaiVoiceReasoningEffort: optionalEnv("OPENAI_VOICE_REASONING_EFFORT") ?? "low",
     openaiDeepReasoningEffort: optionalEnv("OPENAI_DEEP_REASONING_EFFORT") ?? "high",
     deepgramApiKey: optionalEnv("DEEPGRAM_API_KEY"),

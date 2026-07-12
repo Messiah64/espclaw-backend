@@ -63,10 +63,20 @@ export async function registerTelegramRoutes(
         await telegram.sendMessage(targetChat, "Google revoke endpoint is reserved; remove the OAuth token row from Postgres for now.");
         break;
       case "/approve":
-        await telegram.sendMessage(targetChat, arg && await permission.decide(arg, true) ? `Approved ${arg}.` : "Approval ID not found.");
+        if (!arg) {
+          await telegram.sendMessage(targetChat, "Usage: /approve <id>");
+        } else {
+          const decision = await permission.decide(arg, true);
+          await telegram.sendMessage(targetChat, decision.message);
+        }
         break;
       case "/deny":
-        await telegram.sendMessage(targetChat, arg && await permission.decide(arg, false) ? `Denied ${arg}.` : "Approval ID not found.");
+        if (!arg) {
+          await telegram.sendMessage(targetChat, "Usage: /deny <id>");
+        } else {
+          const decision = await permission.decide(arg, false);
+          await telegram.sendMessage(targetChat, decision.message);
+        }
         break;
       case "/mute":
         await telegram.sendMessage(targetChat, "Muted.");
@@ -91,4 +101,3 @@ export async function registerTelegramRoutes(
     reply.send({ ok: true });
   });
 }
-

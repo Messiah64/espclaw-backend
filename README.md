@@ -12,12 +12,14 @@ All sensitive provider credentials stay on the backend as Render environment var
 
 - Device WebSocket connection at `WS /device/ws`
 - Device pairing at `POST /device/pair`
-- Deepgram realtime speech transcription relay
+- OpenAI Realtime always-on speech transcription, with Deepgram fallback
 - OpenAI assistant reasoning and tool calling
 - Telegram webhook approval bot
 - Google OAuth for Gmail, Calendar, Drive, and Contacts tools
 - Permission/risk checks for sensitive actions
-- Postgres-backed token storage, memories, action logs, and pending approvals
+- Postgres-backed durable memory, conversation history, notification watches, action logs, and pending approvals
+- Encrypted Google OAuth token storage and refresh
+- Real Gmail drafts/sends and Calendar event creation with Telegram approval gates
 - Health checks for Render and UptimeRobot
 
 ## Local Setup
@@ -52,6 +54,11 @@ Set these in Render, not in git:
 - `OPENAI_API_KEY`
 - `OPENAI_FAST_MODEL`
 - `OPENAI_DEEP_MODEL`
+- `OPENAI_ENABLE_REALTIME`
+- `OPENAI_REALTIME_MODEL`
+- `OPENAI_REALTIME_TRANSCRIPT_MODEL`
+- `OPENAI_REALTIME_OUTPUT_AUDIO=false`
+- `ASSISTANT_VOICE_OUTPUT_ENABLED=false`
 - `DEEPGRAM_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_WEBHOOK_SECRET`
@@ -65,7 +72,7 @@ Set these in Render, not in git:
 - `NODE_ENV`
 - `PUBLIC_BASE_URL`
 
-`OPENAI_FAST_MODEL` is used for voice latency. `OPENAI_DEEP_MODEL` is used for complex tool-heavy tasks.
+`OPENAI_FAST_MODEL` is used for fast screen replies. `OPENAI_DEEP_MODEL` is used for complex tool-heavy tasks. The default product mode continuously transcribes the microphone but keeps spoken output disabled.
 
 ## Render Deployment
 
@@ -129,7 +136,7 @@ Then open:
 https://<render-service-url>/oauth/google/start
 ```
 
-Refresh tokens are stored in Postgres through the `oauth_tokens` table. Do not use Render local filesystem for tokens.
+Refresh tokens are encrypted with an application key derived from `JWT_SECRET`, then stored in Postgres through the `oauth_tokens` table. Do not use Render local filesystem for tokens.
 
 ## Pair ESP32
 
@@ -171,7 +178,7 @@ First message:
 }
 ```
 
-Then send `audio_start`, `audio_chunk`, `audio_end`, `touch_to_talk`, `mute_toggle`, `ping`, and `log` events. The backend sends `auth_ok`, transcript events, assistant state, tool call status, response text, TTS chunks, errors, and `pong`.
+Then send `audio_start`, `audio_chunk`, `audio_end`, `touch_to_talk`, `mute_toggle`, `ping`, and `log` events. The backend sends `auth_ok`, transcript events, assistant state, tool call status, response text, errors, and `pong`. TTS events are emitted only when `ASSISTANT_VOICE_OUTPUT_ENABLED=true`.
 
 The backend also emits a heartbeat `pong` every 60 seconds while the ESP32 is connected.
 
@@ -205,19 +212,20 @@ Use a 10-minute interval. This avoids waking the database or external APIs.
 - Persistent local files are not reliable; use Postgres for state.
 - UptimeRobot can reduce, but not fully eliminate, cold-start behavior.
 
+## Agent Memory And Watches
+
+The assistant can remember durable facts and preferences, recall recent conversation turns, forget named memories, and create Gmail query watches. Active watches poll every five minutes while the Render process is awake and notify both Telegram and a connected device when results change.
+
 ## Known Risks
 
-- OAuth token encryption should be hardened before production use.
-- Database migrations are not wired yet; the Drizzle schema is present, but migration generation should be added before launch.
-- TTS routing is stubbed and ready for a provider implementation.
-- Google write actions currently stop at approval boundaries and should execute only after the approval worker is completed.
+- Database schema updates currently use idempotent startup SQL; formal versioned migrations should be added before a multi-user launch.
+- Render free-tier sleep pauses notification polling until the service wakes.
+- OAuth storage uses application-level AES-256-GCM. A managed KMS is preferable outside this sandbox.
 - Render MCP service creation requires a Git repository URL that Render can clone.
 
 ## Next Steps
 
-1. Add Drizzle migration generation and apply migrations to Render Postgres.
-2. Complete encrypted token storage with KMS or strong app-level encryption.
-3. Implement the approval executor for approved pending actions.
-4. Add provider-backed TTS streaming.
-5. Add an ESP32 firmware client for this WebSocket protocol.
-
+1. Add formal Drizzle migration generation.
+2. Move token encryption keys to a managed KMS for production.
+3. Add Gmail push notifications or a Render cron worker for sleep-resistant monitoring.
+4. Add more Google write tools behind the same approval executor.

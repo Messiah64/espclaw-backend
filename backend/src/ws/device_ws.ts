@@ -57,11 +57,13 @@ export async function registerDeviceWebSocket(
           mode
         });
         send(socket, { type: "response_text", text: reply });
-        const tts = await services.tts.synthesizeShortReply(reply);
-        for (const chunk of tts.chunks) {
-          send(socket, { type: "tts_audio_chunk", audio_b64: chunk.toString("base64"), mime_type: tts.mimeType });
+        if (_config.assistantVoiceOutputEnabled) {
+          const tts = await services.tts.synthesizeShortReply(reply);
+          for (const chunk of tts.chunks) {
+            send(socket, { type: "tts_audio_chunk", audio_b64: chunk.toString("base64"), mime_type: tts.mimeType });
+          }
+          send(socket, { type: "tts_audio_end" });
         }
-        send(socket, { type: "tts_audio_end" });
       } catch (error) {
         request.log.error({ error, deviceId }, "assistant response failed");
         send(socket, { type: "error", code: "assistant_failed", message: "Assistant response failed." });
@@ -162,7 +164,11 @@ export async function registerDeviceWebSocket(
               deviceId,
               sampleRate: event.sample_rate ?? 24000,
               autoRespond: audioAutoRespond,
-              send: (out) => send(socket, out)
+              send: (out) => send(socket, out),
+              onFinalTranscript: (text) => {
+                latestFinalTranscript = text;
+                if (audioAutoRespond) scheduleAlwaysReply(text, true);
+              }
             });
             try {
               await realtimeSession?.start();
