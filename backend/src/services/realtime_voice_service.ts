@@ -19,6 +19,7 @@ type RealtimeSessionOptions = {
   sampleRate: number;
   autoRespond: boolean;
   send: DeviceSender;
+  onInterimTranscript?: (text: string) => void;
   onFinalTranscript?: (text: string) => void;
 };
 
@@ -221,28 +222,19 @@ export class RealtimeVoiceSession {
       case "input_audio_buffer.speech_started":
         this.startedAt = Date.now();
         this.userTranscript = "";
-        this.options.send({ type: "assistant_thinking", active: false });
-        this.options.send({ type: "state_update", state: { user_speaking: true } });
         break;
       case "input_audio_buffer.speech_stopped":
-        this.options.send({ type: "state_update", state: { user_speaking: false } });
         break;
       case "conversation.item.input_audio_transcription.delta":
         if (typeof event.delta === "string" && event.delta) {
           this.userTranscript += event.delta;
-          this.options.send({ type: "transcript_interim", text: this.userTranscript.trim() });
+          this.options.onInterimTranscript?.(this.userTranscript.trim());
         }
         break;
       case "conversation.item.input_audio_transcription.completed":
         if (typeof event.transcript === "string" && event.transcript.trim()) {
           this.userTranscript = event.transcript.trim();
           this.options.onFinalTranscript?.(event.transcript.trim());
-          this.options.send({
-            type: "transcript_final",
-            text: event.transcript.trim(),
-            latency_ms: Date.now() - this.startedAt,
-            speech_final: true
-          });
         }
         break;
       case "response.created":

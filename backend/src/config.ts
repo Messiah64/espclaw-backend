@@ -13,6 +13,8 @@ export type AppConfig = {
   openaiRealtimeVoice: string;
   openaiRealtimeOutputAudio: boolean;
   assistantVoiceOutputEnabled: boolean;
+  assistantWakeWord: string;
+  assistantWakeWindowMs: number;
   openaiVoiceReasoningEffort: string;
   openaiDeepReasoningEffort: string;
   deepgramApiKey?: string;
@@ -75,6 +77,8 @@ export function loadConfig(): AppConfig {
     openaiRealtimeVoice: optionalEnv("OPENAI_REALTIME_VOICE") ?? "marin",
     openaiRealtimeOutputAudio: booleanEnv("OPENAI_REALTIME_OUTPUT_AUDIO", false),
     assistantVoiceOutputEnabled: booleanEnv("ASSISTANT_VOICE_OUTPUT_ENABLED", false),
+    assistantWakeWord: optionalEnv("ASSISTANT_WAKE_WORD") ?? "Bob",
+    assistantWakeWindowMs: Math.max(1000, Number.parseInt(optionalEnv("ASSISTANT_WAKE_WINDOW_MS") ?? "10000", 10) || 10000),
     openaiVoiceReasoningEffort: optionalEnv("OPENAI_VOICE_REASONING_EFFORT") ?? "low",
     openaiDeepReasoningEffort: optionalEnv("OPENAI_DEEP_REASONING_EFFORT") ?? "high",
     deepgramApiKey: optionalEnv("DEEPGRAM_API_KEY"),

@@ -19,6 +19,8 @@ export async function buildServer(config: AppConfig): Promise<FastifyInstance> {
 
   const services = createServices(config, server.log);
   await ensureDatabaseSchema(services.pool, server.log);
+  await services.memory.remember("owner", "wake_word", config.assistantWakeWord, "system_config");
+  await services.memory.remember("owner", "voice_policy", `Only act on microphone speech after the wake word ${config.assistantWakeWord}.`, "system_config");
   server.decorate("services", services);
 
   await server.register(cors, { origin: true });

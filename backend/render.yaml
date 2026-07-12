@@ -28,6 +28,10 @@ services:
         value: false
       - key: ASSISTANT_VOICE_OUTPUT_ENABLED
         value: false
+      - key: ASSISTANT_WAKE_WORD
+        value: Bob
+      - key: ASSISTANT_WAKE_WINDOW_MS
+        value: 10000
       - key: DEEPGRAM_API_KEY
         sync: false
       - key: TELEGRAM_BOT_TOKEN

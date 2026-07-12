@@ -6,6 +6,7 @@ import type { DeepgramRealtimeSession } from "../services/deepgram_service.js";
 import type { RealtimeVoiceSession } from "../services/realtime_voice_service.js";
 import type { BackendToDeviceEvent, DeviceToBackendEvent } from "../types/protocol.js";
 import { parseDeviceEvent } from "../types/protocol.js";
+import { WakeGate } from "../services/wake_gate.js";
 
 function send(socket: WebSocket, event: BackendToDeviceEvent): void {
   if (socket.readyState === socket.OPEN) {
@@ -34,6 +35,7 @@ export async function registerDeviceWebSocket(
     let audioAutoRespond = false;
     let assistantBusy = false;
     let transcriptTimer: ReturnType<typeof setTimeout> | undefined;
+    const wakeGate = new WakeGate(_config.assistantWakeWord, _config.assistantWakeWindowMs);
 
     const sendToThisDevice = (_targetDeviceId: string, event: BackendToDeviceEvent) => {
       send(socket, event);
@@ -70,6 +72,7 @@ export async function registerDeviceWebSocket(
       } finally {
         assistantBusy = false;
         send(socket, { type: "assistant_thinking", active: false });
+        send(socket, { type: "state_update", state: { wake_state: "standby", wake_word: wakeGate.wakeWord } });
       }
     }
 
@@ -82,11 +85,8 @@ export async function registerDeviceWebSocket(
 
     async function startDeepgramFallback(event: Extract<DeviceToBackendEvent, { type: "audio_start" }>) {
       deepgramSession = services.deepgram.createRealtimeSession((out) => {
-        send(socket, out);
-        if (out.type === "transcript_final") {
-          latestFinalTranscript = out.text;
-          if (audioAutoRespond) scheduleAlwaysReply(out.text, out.speech_final);
-        }
+        if (out.type === "transcript_interim") handleInterimTranscript(out.text);
+        if (out.type === "transcript_final") handleFinalTranscript(out.text, out.speech_final);
       });
       deepgramSession?.start(event.sample_rate, event.encoding);
       send(socket, {
@@ -94,9 +94,41 @@ export async function registerDeviceWebSocket(
         state: {
           audio_streaming: Boolean(deepgramSession),
           audio_mode: audioAutoRespond ? "always" : "push_to_talk",
-          audio_provider: "deepgram"
+          audio_provider: "deepgram",
+          wake_state: "standby",
+          wake_word: wakeGate.wakeWord
         }
       });
+    }
+
+    function handleInterimTranscript(text: string) {
+      const decision = wakeGate.preview(text);
+      if (!decision.accepted) return;
+      if (decision.heardWakeWord) {
+        send(socket, { type: "state_update", state: { wake_state: "armed", wake_word: wakeGate.wakeWord } });
+      }
+      if (decision.command) send(socket, { type: "transcript_interim", text: decision.command });
+    }
+
+    function handleFinalTranscript(text: string, speechFinal = true) {
+      const decision = wakeGate.consume(text);
+      if (!decision.accepted) {
+        send(socket, { type: "state_update", state: { wake_state: "standby", wake_word: wakeGate.wakeWord } });
+        return;
+      }
+      if (!decision.command) {
+        send(socket, { type: "state_update", state: { wake_state: "armed", wake_word: wakeGate.wakeWord } });
+        send(socket, { type: "transcript_final", text: wakeGate.wakeWord, speech_final: true });
+        return;
+      }
+      latestFinalTranscript = decision.command;
+      send(socket, { type: "transcript_final", text: decision.command, speech_final: speechFinal });
+      send(socket, { type: "state_update", state: { wake_state: "command", wake_word: wakeGate.wakeWord } });
+      if (audioAutoRespond) {
+        scheduleAlwaysReply(decision.command, speechFinal);
+      } else {
+        void runAssistantForText(decision.command, "voice");
+      }
     }
 
     function scheduleAlwaysReply(text: string, speechFinal = false) {
@@ -152,6 +184,7 @@ export async function registerDeviceWebSocket(
         case "audio_start":
           latestFinalTranscript = "";
           pendingTranscript = "";
+          wakeGate.reset();
           audioAutoRespond = event.mode === "always" || event.auto_respond === true;
           clearTranscriptTimer();
           realtimeSession?.finish();
@@ -165,10 +198,8 @@ export async function registerDeviceWebSocket(
               sampleRate: event.sample_rate ?? 24000,
               autoRespond: audioAutoRespond,
               send: (out) => send(socket, out),
-              onFinalTranscript: (text) => {
-                latestFinalTranscript = text;
-                if (audioAutoRespond) scheduleAlwaysReply(text, true);
-              }
+              onInterimTranscript: handleInterimTranscript,
+              onFinalTranscript: (text) => handleFinalTranscript(text, true)
             });
             try {
               await realtimeSession?.start();
@@ -177,7 +208,9 @@ export async function registerDeviceWebSocket(
                 state: {
                   audio_streaming: true,
                   audio_mode: audioAutoRespond ? "always" : "push_to_talk",
-                  audio_provider: "openai_realtime"
+                  audio_provider: "openai_realtime",
+                  wake_state: "standby",
+                  wake_word: wakeGate.wakeWord
                 }
               });
             } catch (error) {
@@ -212,7 +245,6 @@ export async function registerDeviceWebSocket(
             deepgramSession?.finish();
             deepgramSession = undefined;
             send(socket, { type: "state_update", state: { audio_streaming: false } });
-            if (latestFinalTranscript.trim()) await runAssistantForText(latestFinalTranscript, "voice");
           }
           break;
         case "text_input":
