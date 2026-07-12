@@ -165,7 +165,7 @@ export class OpenAIService {
             userId: input.userId,
             deviceId: input.deviceId,
             action: `tool.${call.name}`,
-            risk: "read_only",
+            risk: this.tools.riskFor(call.name),
             status: "allowed",
             metadata: { callId: call.call_id }
           });

@@ -26,6 +26,10 @@ export class ToolRegistry {
     }));
   }
 
+  riskFor(name: string): ToolRiskLevel {
+    return this.tools.get(name)?.risk ?? "read_only";
+  }
+
   async run(name: string, args: Record<string, unknown>, context: ToolExecutionContext): Promise<ToolExecutionResult> {
     const tool = this.tools.get(name);
     if (!tool) return { ok: false, text: `Unknown tool: ${name}` };

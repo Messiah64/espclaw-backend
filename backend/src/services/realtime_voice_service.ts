@@ -347,7 +347,7 @@ export class RealtimeVoiceSession {
         userId: this.options.userId,
         deviceId: this.options.deviceId,
         action: `tool.${call.name}`,
-        risk: "read_only",
+        risk: this.tools.riskFor(call.name),
         status: "allowed",
         metadata: { callId: call.call_id, realtime: true }
       });
