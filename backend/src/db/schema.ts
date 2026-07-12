@@ -73,6 +73,8 @@ export const actionLogs = pgTable("action_logs", {
   id: uuid("id").defaultRandom().primaryKey(),
   userId: uuid("user_id").references(() => users.id),
   deviceId: uuid("device_id").references(() => devices.id),
+  ownerKey: text("owner_key"),
+  deviceKey: text("device_key"),
   action: text("action").notNull(),
   risk: text("risk").notNull(),
   status: text("status").notNull(),

@@ -94,12 +94,16 @@ export async function ensureDatabaseSchema(pool: pg.Pool | undefined, logger?: F
       id uuid primary key default gen_random_uuid(),
       user_id uuid references users(id),
       device_id uuid references devices(id),
+      owner_key text,
+      device_key text,
       action text not null,
       risk text not null,
       status text not null,
       metadata jsonb not null default '{}'::jsonb,
       created_at timestamptz not null default now()
     );
+    alter table action_logs add column if not exists owner_key text;
+    alter table action_logs add column if not exists device_key text;
 
     create table if not exists pending_approvals (
       id uuid primary key default gen_random_uuid(),

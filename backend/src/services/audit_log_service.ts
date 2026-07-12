@@ -20,8 +20,8 @@ export class AuditLogService {
     if (!this.db) return;
     try {
       await this.db.insert(actionLogs).values({
-        userId: input.userId,
-        deviceId: input.deviceId,
+        ownerKey: input.userId,
+        deviceKey: input.deviceId,
         action: input.action,
         risk: input.risk,
         status: input.status,
@@ -32,4 +32,3 @@ export class AuditLogService {
     }
   }
 }
-
