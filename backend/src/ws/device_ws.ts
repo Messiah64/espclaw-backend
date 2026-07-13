@@ -1,4 +1,4 @@
-import type { RawData, WebSocket } from "ws";
+import WebSocket, { type RawData } from "ws";
 import type { FastifyInstance } from "fastify";
 import type { AppConfig } from "../config.js";
 import type { createServices } from "../services/index.js";
@@ -7,6 +7,8 @@ import type { RealtimeVoiceSession } from "../services/realtime_voice_service.js
 import type { BackendToDeviceEvent, DeviceToBackendEvent } from "../types/protocol.js";
 import { parseDeviceEvent } from "../types/protocol.js";
 import { WakeGate } from "../services/wake_gate.js";
+
+const activeDeviceSockets = new Map<string, WebSocket>();
 
 function send(socket: WebSocket, event: BackendToDeviceEvent): void {
   if (socket.readyState === socket.OPEN) {
@@ -152,6 +154,14 @@ export async function registerDeviceWebSocket(
       }
       authenticated = true;
       deviceId = event.device_id;
+      const previousSocket = activeDeviceSockets.get(deviceId);
+      if (previousSocket && previousSocket !== socket) {
+        previousSocket.close(4001, "replaced_by_new_connection");
+        setTimeout(() => {
+          if (previousSocket.readyState !== WebSocket.CLOSED) previousSocket.terminate();
+        }, 2_000).unref();
+      }
+      activeDeviceSockets.set(deviceId, socket);
       services.registerDevicePusher(deviceId, sendToThisDevice);
       send(socket, { type: "auth_ok", device_id: deviceId });
       send(socket, { type: "state_update", state: { connected: true, firmware: event.firmware ?? "unknown" } });
@@ -289,7 +299,10 @@ export async function registerDeviceWebSocket(
       clearTranscriptTimer();
       realtimeSession?.finish();
       deepgramSession?.finish();
-      if (deviceId) services.unregisterDevicePusher(deviceId);
+      if (deviceId && activeDeviceSockets.get(deviceId) === socket) {
+        activeDeviceSockets.delete(deviceId);
+        services.unregisterDevicePusher(deviceId);
+      }
       request.log.info({ deviceId }, "device websocket closed");
     });
   });
